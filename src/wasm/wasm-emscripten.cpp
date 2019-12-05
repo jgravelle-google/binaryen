@@ -25,6 +25,8 @@
 #include "ir/literal-utils.h"
 #include "ir/module-utils.h"
 #include "shared-constants.h"
+#include "support/string.h"
+#include "wasm-binary.h"
 #include "wasm-builder.h"
 #include "wasm-traversal.h"
 #include "wasm.h"
@@ -1130,6 +1132,50 @@ std::string EmscriptenGlueGenerator::generateEmscriptenMetadata(
     }
     meta << "\n  },\n";
   }
+
+  commaFirst = true;
+  meta << "  \"emImports\": [";
+  for (auto &sec : wasm.userSections) {
+    std::cerr << "Custom section: " << sec.name << std::endl;
+    if (sec.name == "EM_IMPORT") {
+      std::cerr << "Found EM_IMPORT section!\n";
+      unsigned i = 0;
+      auto begin = sec.data.begin();
+      while (i < sec.data.size()) {
+        U64LEB dataLen;
+        dataLen.read([&]() { return sec.data[i++]; });
+        auto data = std::string(begin + i, begin + i + dataLen.value);
+        i += dataLen.value;
+
+        auto fields = String::Split(data, ",");
+        auto kind = fields[0];
+        if (kind == "METHOD") {
+          auto className = fields[1];
+          auto name = fields[2];
+          auto retType = fields[3];
+          // strip quotes
+          className = std::string(className, 1, className.size() - 2);
+          name = std::string(name, 1, name.size() - 2);
+          auto importName = "__em_import_" + className + "_" + name;
+          meta << nextElement();
+          meta << "{"
+            << "\n      \"className\": \"" << className << "\","
+            << "\n      \"name\": \"" << name << "\","
+            << "\n      \"retType\": \"" << retType << "\","
+            << "\n      \"importName\": \"" << importName << "\","
+            << "\n      \"args\": [";
+          commaFirst = true;
+          for (unsigned j = 4; j < fields.size(); ++j) {
+            meta << nextElement();
+            meta << "    \"" << fields[j] << '"';
+          }
+          meta << "]\n    }";
+          commaFirst = false;
+        }
+      }
+    }
+  }
+  meta << "\n  ],\n";
 
   meta << "  \"staticBump\": " << staticBump << ",\n";
   meta << "  \"tableSize\": " << wasm.table.initial.addr << ",\n";
