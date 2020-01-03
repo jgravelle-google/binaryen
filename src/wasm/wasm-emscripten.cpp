@@ -28,6 +28,7 @@
 #include "support/string.h"
 #include "wasm-binary.h"
 #include "wasm-builder.h"
+#include "wasm-s-parser.h"
 #include "wasm-traversal.h"
 #include "wasm.h"
 
@@ -1137,41 +1138,46 @@ std::string EmscriptenGlueGenerator::generateEmscriptenMetadata(
   meta << "  \"emImports\": [";
   for (auto &sec : wasm.userSections) {
     std::cerr << "Custom section: " << sec.name << std::endl;
-    if (sec.name == "EM_IMPORT") {
+    if (sec.name == "em-import") {
       std::cerr << "Found EM_IMPORT section!\n";
-      unsigned i = 0;
-      auto begin = sec.data.begin();
-      while (i < sec.data.size()) {
-        U64LEB dataLen;
-        dataLen.read([&]() { return sec.data[i++]; });
-        auto data = std::string(begin + i, begin + i + dataLen.value);
-        i += dataLen.value;
-
-        auto fields = String::Split(data, ",");
-        auto kind = fields[0];
-        if (kind == "METHOD") {
-          auto className = fields[1];
-          auto name = fields[2];
-          auto retType = fields[3];
-          // strip quotes
-          className = std::string(className, 1, className.size() - 2);
-          name = std::string(name, 1, name.size() - 2);
-          auto importName = "__em_import_" + className + "_" + name;
-          meta << nextElement();
-          meta << "{"
-            << "\n      \"className\": \"" << className << "\","
-            << "\n      \"name\": \"" << name << "\","
-            << "\n      \"retType\": \"" << retType << "\","
-            << "\n      \"importName\": \"" << importName << "\","
-            << "\n      \"args\": [";
-          commaFirst = true;
-          for (unsigned j = 4; j < fields.size(); ++j) {
-            meta << nextElement();
-            meta << "    \"" << fields[j] << '"';
-          }
-          meta << "]\n    }";
-          commaFirst = false;
+      SExpressionParser parser(sec.data.data());
+      auto root = parser.root;
+      for (auto sexp : root->list()) {
+        auto &elems = sexp->list();
+        auto i = 0;
+        std::string kind = elems[i++]->c_str();
+        std::string className = "";
+        if (kind != "func") {
+          className = elems[i++]->c_str();
         }
+        std::string name = elems[i++]->c_str();
+        std::string importName = "";
+        if (kind != "constructor") {
+          importName = elems[i++]->c_str();
+        }
+        auto &args = elems[i++]->list();
+        std::string retType = elems[i++]->c_str();
+
+        meta << nextElement();
+        meta << "{"
+          << "\n      \"kind\": \"" << kind << "\","
+          << "\n      \"name\": \"" << name << "\","
+          << "\n      \"retType\": \"" << retType << "\",";
+        if (className != "") {
+          meta << "\n      \"className\": \"" << className << "\",";
+        }
+        if (importName != "") {
+          meta << "\n      \"importName\": \"" << importName << "\",";
+        }
+
+        meta << "\n      \"args\": [";
+        commaFirst = true;
+        for (auto arg : args) {
+          meta << nextElement();
+          meta << "    \"" << arg->c_str() << '"';
+        }
+        meta << "]\n    }";
+        commaFirst = false;
       }
     }
   }
